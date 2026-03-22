@@ -107,7 +107,7 @@ async function cmdScreenshot() {
 }
 
 async function cmdCloseTab() {
-  if (agentTabId) { try { await chrome.tabs.remove(agentTabId) } catch {} ; agentTabId = null }
+  if (agentTabId) { try { await chrome.tabs.remove(agentTabId) } catch {} agentTabId = null }
   return { ok: true }
 }
 
