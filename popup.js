@@ -1,17 +1,14 @@
 const dot        = document.getElementById('dot')
 const statusText = document.getElementById('statusText')
-const userText   = document.getElementById('userText')
 const openBtn    = document.getElementById('openBtn')
 
-chrome.runtime.sendMessage({ type: 'get_status' }, (resp) => {
-  if (resp?.connected) {
+chrome.runtime.sendMessage({ type: 'ping' }, (resp) => {
+  if (!chrome.runtime.lastError && resp?.ok) {
     dot.className = 'dot connected'
-    statusText.textContent = 'Conectado'
-    userText.textContent = resp.userId ? `ID: ${resp.userId.slice(0, 12)}...` : ''
+    statusText.textContent = 'Ativo e pronto'
   } else {
     dot.className = 'dot connecting'
-    statusText.textContent = 'Desconectado'
-    userText.textContent = 'Aguardando login no site'
+    statusText.textContent = 'Reiniciando...'
   }
 })
 

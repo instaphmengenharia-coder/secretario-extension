@@ -1,25 +1,45 @@
-// Injected only on nova-pasta-secretario.vercel.app
-// Bridges the React app ↔ Extension background
+// Injected into nova-pasta-secretario.vercel.app
+// Bridges site ↔ extension background
 
-(function () {
-  // Announce extension presence to the page
-  window.postMessage({ type: 'SE_EXT_PRESENT', extId: chrome.runtime.id }, '*')
+;(function () {
+  // Check if extension context is still valid
+  function isValid() {
+    try { return !!chrome.runtime?.id } catch { return false }
+  }
 
-  // Listen for messages from the React app
+  // Announce presence
+  if (isValid()) {
+    window.postMessage({ type: 'SE_EXT_PRESENT' }, '*')
+  }
+
   window.addEventListener('message', (event) => {
     if (event.source !== window) return
-    const msg = event.data
+    if (!isValid()) return // Extension was reloaded, ignore
 
-    if (msg.type === 'SE_SET_USER') {
-      chrome.runtime.sendMessage({ type: 'set_user', userId: msg.userId }, (resp) => {
-        window.postMessage({ type: 'SE_STATUS', connected: resp?.connected ?? false }, '*')
-      })
-    }
+    const msg = event.data
+    if (!msg || !msg.type) return
 
     if (msg.type === 'SE_GET_STATUS') {
-      chrome.runtime.sendMessage({ type: 'get_status' }, (resp) => {
-        window.postMessage({ type: 'SE_STATUS', connected: resp?.connected ?? false, userId: resp?.userId }, '*')
-      })
+      try {
+        chrome.runtime.sendMessage({ type: 'ping' }, (resp) => {
+          if (chrome.runtime.lastError) {
+            window.postMessage({ type: 'SE_STATUS', connected: false }, '*')
+            return
+          }
+          window.postMessage({ type: 'SE_STATUS', connected: !!(resp?.ok) }, '*')
+        })
+      } catch {
+        window.postMessage({ type: 'SE_STATUS', connected: false }, '*')
+      }
+    }
+
+    if (msg.type === 'SE_COMMAND') {
+      try {
+        chrome.runtime.sendMessage({ type: 'execute', cmd: msg.cmd }, (resp) => {
+          if (chrome.runtime.lastError) return
+          window.postMessage({ type: 'SE_RESULT', reqId: msg.reqId, result: resp }, '*')
+        })
+      } catch {}
     }
   })
 })()

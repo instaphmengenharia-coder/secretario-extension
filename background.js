@@ -1,127 +1,55 @@
-const RAILWAY_WS = 'wss://agente-servidor-production.up.railway.app/extension'
+// Secretário Escolar — background.js
+// Executa comandos enviados pelo site via bridge.js
+// Sem WebSocket permanente — responde a chamadas sob demanda
 
-let ws = null
-let userId = null
 let agentTabId = null
-let pendingCommands = {} // id → { resolve, reject }
 
-// ── WebSocket ──────────────────────────────────────────────
+// ── Comandos ─────────────────────────────────────────────
 
-function connect() {
-  try {
-    ws = new WebSocket(RAILWAY_WS)
-
-    ws.onopen = () => {
-      console.log('[SE] Conectado ao Railway')
-      setStatus('connected')
-      if (userId) sendWS({ type: 'auth', userId })
-    }
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data)
-        handleCommand(msg)
-      } catch {}
-    }
-
-    ws.onclose = () => {
-      console.log('[SE] Desconectado, reconectando em 4s...')
-      setStatus('disconnected')
-      setTimeout(connect, 4000)
-    }
-
-    ws.onerror = () => {
-      ws.close()
-    }
-  } catch (e) {
-    setTimeout(connect, 4000)
+async function handleCommand(cmd) {
+  const { type } = cmd
+  switch (type) {
+    case 'ping':       return { ok: true, version: '1.0.0' }
+    case 'navigate':   return await cmdNavigate(cmd.url)
+    case 'read_page':  return await cmdReadPage()
+    case 'click':      return await cmdClick(cmd.selector)
+    case 'fill':       return await cmdFill(cmd.selector, cmd.value)
+    case 'fill_form':  return await cmdFillForm(cmd.fields)
+    case 'evaluate':   return await cmdEvaluate(cmd.code)
+    case 'screenshot': return await cmdScreenshot()
+    case 'close_tab':  return await cmdCloseTab()
+    case 'wait':       return await cmdWait(cmd.ms || 1000)
+    default:           return { ok: false, error: 'Comando desconhecido: ' + type }
   }
 }
-
-function sendWS(data) {
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify(data))
-  }
-}
-
-function setStatus(status) {
-  chrome.storage.local.set({ status })
-  chrome.action.setBadgeText({ text: status === 'connected' ? '✓' : '...' })
-  chrome.action.setBadgeBackgroundColor({ color: status === 'connected' ? '#34a853' : '#9aa0a6' })
-}
-
-// ── Comandos vindos do Railway ────────────────────────────
-
-async function handleCommand(msg) {
-  const { id, type } = msg
-
-  if (type === 'ping') {
-    sendWS({ type: 'pong', id })
-    return
-  }
-
-  try {
-    let result
-    switch (type) {
-      case 'navigate':   result = await cmdNavigate(msg.url);               break
-      case 'read_page':  result = await cmdReadPage();                       break
-      case 'click':      result = await cmdClick(msg.selector);              break
-      case 'fill':       result = await cmdFill(msg.selector, msg.value);    break
-      case 'fill_form':  result = await cmdFillForm(msg.fields);             break
-      case 'evaluate':   result = await cmdEvaluate(msg.code);               break
-      case 'screenshot': result = await cmdScreenshot();                     break
-      case 'close_tab':  result = await cmdCloseTab();                       break
-      case 'wait':       result = await cmdWait(msg.ms || 1500);             break
-      default:           result = { error: `Comando desconhecido: ${type}` }
-    }
-    sendWS({ type: 'result', id, result })
-  } catch (err) {
-    sendWS({ type: 'error', id, error: err.message })
-  }
-}
-
-// ── Implementação dos comandos ────────────────────────────
 
 async function cmdNavigate(url) {
   if (agentTabId) {
-    try {
-      await chrome.tabs.update(agentTabId, { url })
-    } catch {
-      // Tab foi fechada, cria nova
-      const tab = await chrome.tabs.create({ url, active: false })
-      agentTabId = tab.id
-    }
+    try { await chrome.tabs.update(agentTabId, { url }) }
+    catch { const t = await chrome.tabs.create({ url, active: false }); agentTabId = t.id }
   } else {
-    const tab = await chrome.tabs.create({ url, active: false })
-    agentTabId = tab.id
+    const t = await chrome.tabs.create({ url, active: false })
+    agentTabId = t.id
   }
   await waitTabLoad(agentTabId)
   return { ok: true, url }
 }
 
 async function cmdReadPage() {
-  await injectContentIfNeeded()
   const [r] = await chrome.scripting.executeScript({
     target: { tabId: agentTabId },
-    func: () => ({
-      title: document.title,
-      url:   location.href,
-      text:  document.body.innerText.slice(0, 8000),
-    }),
+    func: () => ({ title: document.title, url: location.href, text: document.body.innerText.slice(0, 8000) }),
   })
   return r.result
 }
 
 async function cmdClick(selector) {
-  await injectContentIfNeeded()
   const [r] = await chrome.scripting.executeScript({
     target: { tabId: agentTabId },
     func: (sel) => {
       const el = document.querySelector(sel)
-      if (!el) return { ok: false, error: `Elemento não encontrado: ${sel}` }
-      el.scrollIntoView({ block: 'center' })
-      el.click()
-      return { ok: true }
+      if (!el) return { ok: false, error: 'Não encontrado: ' + sel }
+      el.scrollIntoView({ block: 'center' }); el.click(); return { ok: true }
     },
     args: [selector],
   })
@@ -129,14 +57,12 @@ async function cmdClick(selector) {
 }
 
 async function cmdFill(selector, value) {
-  await injectContentIfNeeded()
   const [r] = await chrome.scripting.executeScript({
     target: { tabId: agentTabId },
     func: (sel, val) => {
       const el = document.querySelector(sel)
-      if (!el) return { ok: false, error: `Campo não encontrado: ${sel}` }
-      el.focus()
-      el.value = val
+      if (!el) return { ok: false, error: 'Não encontrado: ' + sel }
+      el.focus(); el.value = val
       el.dispatchEvent(new Event('input',  { bubbles: true }))
       el.dispatchEvent(new Event('change', { bubbles: true }))
       return { ok: true }
@@ -147,30 +73,17 @@ async function cmdFill(selector, value) {
 }
 
 async function cmdFillForm(fields) {
-  // fields = [{ selector, value, type }]  type: 'text' | 'click' | 'select'
-  await injectContentIfNeeded()
   const [r] = await chrome.scripting.executeScript({
     target: { tabId: agentTabId },
     func: (fields) => {
-      const results = []
       for (const f of fields) {
         const el = document.querySelector(f.selector)
-        if (!el) { results.push({ ok: false, selector: f.selector }); continue }
+        if (!el) continue
         el.scrollIntoView({ block: 'center' })
-        if (f.type === 'click') {
-          el.click()
-        } else if (f.type === 'select') {
-          el.value = f.value
-          el.dispatchEvent(new Event('change', { bubbles: true }))
-        } else {
-          el.focus()
-          el.value = f.value
-          el.dispatchEvent(new Event('input',  { bubbles: true }))
-          el.dispatchEvent(new Event('change', { bubbles: true }))
-        }
-        results.push({ ok: true, selector: f.selector })
+        if (f.type === 'click') { el.click() }
+        else { el.focus(); el.value = f.value; el.dispatchEvent(new Event('input', { bubbles: true })) }
       }
-      return { ok: true, results }
+      return { ok: true }
     },
     args: [fields],
   })
@@ -178,11 +91,12 @@ async function cmdFillForm(fields) {
 }
 
 async function cmdEvaluate(code) {
-  await injectContentIfNeeded()
-  const fn = new Function(`return (${code})`)
+  // Use executeScript with world: 'MAIN' to run arbitrary code
   const [r] = await chrome.scripting.executeScript({
     target: { tabId: agentTabId },
-    func: fn,
+    world: 'MAIN',
+    func: (c) => { try { return eval(c) } catch(e) { return 'error: ' + e.message } },
+    args: [code]
   })
   return { value: r.result }
 }
@@ -193,29 +107,13 @@ async function cmdScreenshot() {
 }
 
 async function cmdCloseTab() {
-  if (agentTabId) {
-    try { await chrome.tabs.remove(agentTabId) } catch {}
-    agentTabId = null
-  }
+  if (agentTabId) { try { await chrome.tabs.remove(agentTabId) } catch {} ; agentTabId = null }
   return { ok: true }
 }
 
 async function cmdWait(ms) {
-  await new Promise(r => setTimeout(r, ms))
+  await new Promise(r => setTimeout(r, Math.min(ms, 10000)))
   return { ok: true }
-}
-
-// ── Helpers ────────────────────────────────────────────────
-
-async function injectContentIfNeeded() {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: agentTabId },
-      func: () => true,
-    })
-  } catch {
-    // ignore if already injected
-  }
 }
 
 function waitTabLoad(tabId) {
@@ -225,33 +123,30 @@ function waitTabLoad(tabId) {
       if (id === tabId && info.status === 'complete') {
         chrome.tabs.onUpdated.removeListener(listener)
         clearTimeout(timeout)
-        setTimeout(resolve, 500) // extra 500ms para JS carregar
+        setTimeout(resolve, 600)
       }
     }
     chrome.tabs.onUpdated.addListener(listener)
   })
 }
 
-// ── Mensagens do site (bridge.js) ─────────────────────────
+// ── Mensagens da bridge.js ────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  if (msg.type === 'set_user') {
-    userId = msg.userId
-    chrome.storage.local.set({ userId })
-    if (ws && ws.readyState === 1) sendWS({ type: 'auth', userId })
-    reply({ ok: true, connected: ws?.readyState === 1 })
+  if (msg.type === 'ping') {
+    reply({ ok: true, connected: true })
     return true
+  }
+
+  if (msg.type === 'execute') {
+    handleCommand(msg.cmd)
+      .then(result => reply({ ok: true, result }))
+      .catch(err  => reply({ ok: false, error: err.message }))
+    return true // async reply
   }
 
   if (msg.type === 'get_status') {
-    reply({ connected: ws?.readyState === 1, userId })
+    reply({ connected: true })
     return true
   }
-})
-
-// ── Init ───────────────────────────────────────────────────
-
-chrome.storage.local.get(['userId', 'status'], (data) => {
-  userId = data.userId || null
-  connect()
 })

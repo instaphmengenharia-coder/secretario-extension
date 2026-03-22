@@ -3,7 +3,7 @@
   "name": "Secretário Escolar — Agente IA",
   "version": "1.0.0",
   "description": "Agente autônomo que faz atividades escolares no seu Chrome",
-  "permissions": ["tabs", "scripting", "storage", "activeTab"],
+  "permissions": ["tabs", "scripting", "storage", "activeTab", "alarms"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
