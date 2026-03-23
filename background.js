@@ -38,7 +38,7 @@ async function cmdNavigate(url) {
 async function cmdReadPage() {
   const [r] = await chrome.scripting.executeScript({
     target: { tabId: agentTabId },
-    func: () => ({ title: document.title, url: location.href, text: document.body.innerText.slice(0, 8000) }),
+    func: () => ({ title: document.title, url: location.href, text: document.body.innerText.slice(0, 3000) }),
   })
   return r.result
 }
