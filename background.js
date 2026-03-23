@@ -7,7 +7,7 @@ let agentTabId = null
 // ── Comandos ─────────────────────────────────────────────
 
 async function handleCommand(cmd) {
-  const { type } = cmd
+  const type = cmd.action || cmd.type  // suporta ambos os formatos
   switch (type) {
     case 'ping':       return { ok: true, version: '1.0.0' }
     case 'navigate':   return await cmdNavigate(cmd.url)
